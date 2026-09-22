@@ -6,14 +6,16 @@
 
 ## 1. Kaynak kodu alın
 
-Uygulamada **Yönetim → Kalıcı Yayın → Yayın paketini indir** düğmesini kullanın. ZIP'i bilgisayarınızda açın. İçindeki `konsept-studyo` klasöründe `package.json`, `src`, `drizzle` ve bu rehber bulunur.
+Uygulama içindeki **Kalıcı Yayın** ekranı ve kaynak kod ZIP indirme servisi kaldırılmıştır. Kurulum ve bakım bilgileri yalnızca bu dosyada tutulur; eski `/yonetim/yayin` adresi yönetim gösterge paneline yönlendirilir.
+
+Kaynak kodu kendi GitHub deponuzdan **Code → Download ZIP** ile indirin veya depoyu bilgisayarınıza klonlayın. ZIP'i açın; `package.json`, `src`, `drizzle` ve bu rehberin bulunduğu proje klasörünü kullanın.
 
 - ZIP, uygulama kodunu ve tablo şemasını içerir; **veritabanı yedeği değildir**.
 - Mevcut ürünler, müşteriler, tasarımlar, teklifler, `.env` dosyası ve şifreler dahil değildir.
 - Yüklenen ürün görselleri bu sürümde veritabanındaki kayıtlarda tutulur; bunlar kod ZIP'iyle taşınmaz.
-- `.env.example` boş bir ayar şablonudur. Gerçek değerleri GitHub'a yüklemeyin.
+- Yerel ayarları `.env.local` dosyasında saklayın. Gerçek bağlantı adreslerini veya şifreleri GitHub'a yüklemeyin.
 
-GitHub'da kendinize ait **private** bir depo oluşturun. ZIP dosyasının kendisini değil, açılmış klasörün içeriğini depoya aktarın. `package.json` depo kökünde bulunmalıdır. `.gitignore` ve `package-lock.json` dahil olsun; `.env`, `node_modules` ve `.next` olmasın.
+Mevcut **private** GitHub deponuzu kullanabilirsiniz. Başka bir depoya aktarıyorsanız ZIP dosyasının kendisini değil, açılmış klasörün içeriğini aktarın. `package.json` depo kökünde bulunmalıdır. `.gitignore` ve `package-lock.json` dahil olsun; `.env`, `.env.local`, `node_modules` ve `.next` olmasın.
 
 ## 2. Kalıcı veritabanı oluşturun
 
@@ -29,9 +31,28 @@ Bu ortamdaki `127.0.0.1` veritabanı adresi Vercel'de çalışmaz. Sandbox Postg
 
 ## 3. İlk tablo kurulumunu yapın
 
+Aşağıdaki iki yöntemden **yalnızca birini** kullanın. Tablolar siteyi açınca veya Vercel'de Deploy deyince kendiliğinden oluşmaz.
+
+### Yöntem A — Terminal kullanmadan, Neon SQL Editor (ilk kurulum)
+
+Windows dahil, yalnızca tarayıcıyla yapılabilir. Node.js kurmanıza, `.env.local` oluşturmanıza veya `npm ci` çalıştırmanıza gerek yoktur.
+
+1. Bu paketteki [`NEON_ILK_KURULUM.sql`](./NEON_ILK_KURULUM.sql) dosyasını açın ve **içeriğinin tamamını** kopyalayın. Dosyaya şifre veya bağlantı adresi yazılmaz; değiştirilecek yer tutucu yoktur.
+2. [Neon Console](https://console.neon.tech)'da projenizi açın ve **SQL Editor** bölümüne girin.
+3. Editördeki **branch** ve **database** seçimlerinin Vercel'in **Production → DATABASE_URL** ayarındaki veritabanıyla aynı olduğundan emin olun. Başka bir Neon branch'ine kurulum yapmak canlı siteyi düzeltmez.
+4. Editördeki örnek sorguyu temizleyin, dosyanın tamamını yapıştırın ve **Run** düğmesine basın.
+5. Hata olmadan tamamlandığında son sorguda şu beş tablo görünmelidir: `categories`, `designs`, `products`, `quotes`, `subcategories`.
+6. Aşağıdaki terminal yöntemini ayrıca çalıştırmayın. Vercel'e henüz yayınlamadıysanız **4. Vercel'e yayınlayın**, yayınınız zaten hazırsa **6. Canlı yayını doğrulayın** bölümüne geçin. Yalnızca tablo oluşturduysanız Vercel'de yeniden yayın gerekmez; siteyi yenileyin. Ortam değişkenleri değiştiyse **Redeploy** gerekir.
+
+Bu dosya ilk şemayı ve Drizzle migration kaydını tek atomik işlemle oluşturur. Aynı ilk kurulum kayıtlıysa yeniden tablo/veri eklemez. Mevcut uygulama tabloları olup bunlarla eşleşen migration kaydı yoksa veya kurulum kısmi/farklıysa **işlemi durdurur**; mevcut veritabanına kendiliğinden geçmiş kaydı eklemez. Hata alırsanız tabloları silmeyin, `DROP` veya `--force` kullanmayın. Hata mesajını, gizli değerleri çıkardıktan sonra yardım almak için paylaşın.
+
+Dosya ürün veya müşteri verisi taşımaz; şema onarım aracı değildir. Gelecekteki şema güncellemelerinde incelenmiş yeni migration'lar uygulanmalıdır.
+
+### Yöntem B — Bilgisayarda terminal ile
+
 Bilgisayarınıza **Node.js 22 LTS** kurun. Proje klasöründe terminal açın.
 
-1. `.env.example` dosyasının kopyasını `.env.local` adıyla oluşturun.
+1. Proje klasöründe `.env.local` dosyası oluşturun; bu dosyayı GitHub'a yüklemeyin.
 2. Kendi Neon bağlantılarınızı ve yönetici bilgilerinizi doldurun. Kullanıcı adı `:` içermemeli. Parola en az 16 karakter olmalı; parola yöneticisinden 32+ karakterlik rastgele bir parola önerilir.
 3. Bağımlılıkları kurun:
 
@@ -74,6 +95,14 @@ Bu ilk migration zaten aynı tabloları içeren mevcut bir veritabanına uygulan
 
 Preview dalları için ayrı bir Neon geliştirme branch'i ve ayrı giriş bilgileri kullanın. Her önizlemeyi gerçek müşteri veritabanına bağlamayın. Vercel ortam değişkeni değişikliklerinden sonra **Redeploy** gerekir.
 
+### Mevcut canlı siteyi güncelleyin
+
+Kod değişiklikleri Vercel projesinin izlediği **Production Branch** dalına alındığında GitHub entegrasyonu yeni bir yayın başlatır. Değişiklikler başka bir geliştirme dalındaysa önce GitHub'da pull request üzerinden inceleyip üretim dalına birleştirin.
+
+- Vercel'de yeni yayının doğru commit'i kullandığını ve **Ready** olduğunu kontrol edin.
+- Eski bir deployment'a **Redeploy** yapmak, farklı bir daldaki yeni kodu otomatik olarak almaz.
+- Yalnızca menü/sayfa değişikliği için Neon kurulumunu tekrar çalıştırmayın; mevcut veritabanını ve giriş ayarlarını koruyun.
+
 ### Erişim koruması
 
 Vercel ortamında giriş koruması otomatik zorunludur. Eksik ya da kısa bir yönetici parolası varsa uygulama verileri açmak yerine kurulum uyarısı gösterir.
@@ -103,7 +132,9 @@ Mevcut e-posta MX/TXT kayıtlarını silmeyin. Sadece gerekli A/CNAME kayıtlar�
 ## 6. Canlı yayını doğrulayın
 
 - Yeni adresi gizli pencerede açın: kullanıcı adı/parola sorulmalı.
-- `/yonetim/yayin` ekranında bulut veritabanı bağlantısı ve beş tablonun hazır olduğu görünmeli.
+- `/api/health` adresi `{"ok":true}` döndürmeli; bu yalnızca veritabanı bağlantısını doğrular, tabloların varlığını doğrulamaz.
+- Neon panelinde canlı yayının bağlı olduğu veritabanında `categories`, `subcategories`, `products`, `designs` ve `quotes` tablolarını kontrol edin.
+- `/yonetim` gösterge paneli açılmalı; masaüstü ve mobil menülerde kurulum/yayın rehberi bağlantısı bulunmamalı.
 - Bir deneme ürünü ekleyin, tasarıma yerleştirin, kaydedip tekrar açın.
 - Teklif oluşturmayı ve PDF çıktısını kontrol edin.
 - Yeniden deploy sonrasında kayıtların korunduğunu doğrulayın.
@@ -132,12 +163,12 @@ Kalıcı adres, uygulama ve veritabanı projeleri aktif tutulduğu sürece kulla
 
 ## Geliştirici notları
 
-- Yerel sandbox'ın `drizzle.config.json` dosyası yalnızca yerel ortama yöneliktir ve yayın ZIP'ine dahil edilmez. Canlı ortam komutlarında `--config=drizzle.deploy.config.ts` kullanın.
+- Yerel sandbox'ın `drizzle.config.json` dosyası yalnızca yerel ortama yöneliktir. Canlı ortam komutlarında `--config=drizzle.deploy.config.ts` kullanın.
 - İlerideki şema değişiklikleri için `npx drizzle-kit generate --config=drizzle.deploy.config.ts` ile migration üretin, SQL'i inceleyin, yedek alın, sonra `migrate` çalıştırın.
 - Uygulama Drizzle üzerinden `pg` kullanır; Vercel'de bağlantı havuzu yaşam döngüsü `@vercel/functions` ile yönetilir. Neon pooled URL kullanın.
 - Kategori ilk kurulumu transaction kilidiyle birden fazla sunucuda eşzamanlı çalışmaya karşı korunur.
 - Next.js Proxy mevcut sayfa ve API girişlerini korur. Yeni bir Server Action veya farklı yol eklenirse o işlemde de kimlik/yetki kontrolü eklenmelidir.
-- Yayın paketi kodları içerir; gerçek üretim kodunda şifre hardcode etmeyin.
+- Kaynak kod GitHub üzerinden yönetilir; uygulama üzerinden indirme servisi sunulmaz. Gerçek üretim kodunda şifre hardcode etmeyin.
 - Canlıya geçmeden önce `npm audit`, tip kontrolü ve üretim derlemesi çalıştırın; açık kalan bağımlılık uyarılarını değerlendirin.
 
 ## Resmi kaynaklar
