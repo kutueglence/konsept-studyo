@@ -29,14 +29,6 @@ export default async function YonetimPage() {
         </p>
       </div>
 
-      <div className="flex flex-wrap items-center justify-between gap-4 rounded-2xl border border-indigo-100 bg-indigo-50/60 p-5">
-        <div>
-          <h2 className="text-sm font-bold text-indigo-900">Stüdyonuzu kendi adresinizde yayınlayın</h2>
-          <p className="mt-1 text-xs text-indigo-700/80">Yayın paketini indirin; Vercel ve Neon kurulum rehberini takip edin.</p>
-        </div>
-        <Link href="/yonetim/yayin" className="btn-primary text-xs">Kalıcı Yayın Rehberi →</Link>
-      </div>
-
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
         {cards.map((c) => (
           <Link key={c.label} href={c.href} className="card p-4 transition hover:shadow-md">

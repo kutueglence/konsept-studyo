@@ -8,7 +8,6 @@ const NAV = [
   { href: "/yonetim/konseptler", label: "Tasarımlar", icon: "🎨" },
   { href: "/yonetim/teklifler", label: "Teklifler", icon: "🧾" },
   { href: "/yonetim/musteriler", label: "Müşteriler", icon: "👥" },
-  { href: "/yonetim/yayin", label: "Kalıcı Yayın", icon: "🌐" },
 ];
 
 export default function YonetimLayout({ children }: { children: ReactNode }) {
