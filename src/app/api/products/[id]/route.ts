@@ -1,7 +1,8 @@
 import { NextResponse } from "next/server";
 import { eq } from "drizzle-orm";
 import { db } from "@/db";
-import { products } from "@/db/schema";
+import { categories, products, subcategories } from "@/db/schema";
+import { sanitizeProductPatch } from "@/lib/server/product-sanitize";
 
 export const dynamic = "force-dynamic";
 
@@ -16,33 +17,37 @@ export async function GET(_request: Request, { params }: Ctx) {
 
 export async function PATCH(request: Request, { params }: Ctx) {
   const { id } = await params;
-  const body = (await request.json()) as Record<string, unknown>;
-  const patch: Record<string, unknown> = { updatedAt: new Date() };
-  const numberKeys = ["width", "height", "depth", "price", "stock"];
-  const passKeys = [
-    "name",
-    "imageUrl",
-    "modelUrl",
-    "shape",
-    "color",
-    "material",
-    "description",
-    "plane",
-    "tags",
-  ];
-  for (const key of numberKeys) {
-    if (body[key] !== undefined) patch[key] = Number(body[key]);
+  let body: Record<string, unknown>;
+  try {
+    body = (await request.json()) as Record<string, unknown>;
+  } catch {
+    return NextResponse.json({ error: "Geçersiz istek gövdesi." }, { status: 400 });
   }
-  for (const key of passKeys) {
-    if (body[key] !== undefined) patch[key] = body[key];
-  }
-  if (body.categoryId !== undefined) patch.categoryId = body.categoryId ? Number(body.categoryId) : null;
-  if (body.subcategoryId !== undefined)
-    patch.subcategoryId = body.subcategoryId ? Number(body.subcategoryId) : null;
-  if (body.isActive !== undefined) patch.isActive = Boolean(body.isActive);
-  if (body.colorEditable !== undefined) patch.colorEditable = Boolean(body.colorEditable);
+  const result = sanitizeProductPatch(body);
+  if (!result.ok) return NextResponse.json({ error: result.error }, { status: 400 });
+  const patch = result.data as Record<string, unknown>;
 
+  if (patch.categoryId !== undefined && patch.categoryId !== null) {
+    const [cat] = await db
+      .select({ id: categories.id })
+      .from(categories)
+      .where(eq(categories.id, patch.categoryId as number));
+    if (!cat) return NextResponse.json({ error: "Seçili kategori bulunamadı." }, { status: 400 });
+  }
+  if (patch.subcategoryId !== undefined && patch.subcategoryId !== null) {
+    const [sub] = await db
+      .select({ id: subcategories.id, categoryId: subcategories.categoryId })
+      .from(subcategories)
+      .where(eq(subcategories.id, patch.subcategoryId as number));
+    const expected = (patch.categoryId as number | null | undefined) ?? undefined;
+    if (!sub || (expected !== undefined && sub.categoryId !== expected)) {
+      return NextResponse.json({ error: "Seçili alt kategori bulunamadı." }, { status: 400 });
+    }
+  }
+
+  patch.updatedAt = new Date();
   const [row] = await db.update(products).set(patch).where(eq(products.id, Number(id))).returning();
+  if (!row) return NextResponse.json({ error: "Ürün bulunamadı." }, { status: 404 });
   return NextResponse.json({ product: row });
 }
 

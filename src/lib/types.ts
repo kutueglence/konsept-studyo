@@ -1,3 +1,5 @@
+import { DEFAULT_WALL_PATTERN, type WallPatternConfig } from "./editor/wall-pattern";
+
 export type Plane = "wall" | "floor" | "ceiling";
 
 export type ShapeKey =
@@ -9,6 +11,9 @@ export type ShapeKey =
   | "panel-yuvarlak"
   | "panel-kemer"
   | "panel-dikdortgen"
+  | "panel-oval"
+  | "panel-kare"
+  | "panel-dalga"
   | "cicek"
   | "yaprak"
   | "neon-yazi"
@@ -42,6 +47,8 @@ export interface RoomConfig {
   gridVisible: boolean;
   snapEnabled: boolean;
   snapSize: number; // cm
+  /** duvar yüzey deseni (düz duvar, tuğla, şerit…) — duvar cm ile ölçeklenir */
+  wallPattern: WallPatternConfig;
 }
 
 export interface SceneItemBase {
@@ -123,6 +130,7 @@ export const DEFAULT_ROOM: RoomConfig = {
   gridVisible: true,
   snapEnabled: true,
   snapSize: 5,
+  wallPattern: { ...DEFAULT_WALL_PATTERN },
 };
 
 export const EVENT_TYPES = [

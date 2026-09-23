@@ -3,6 +3,7 @@
 import {
   useCallback,
   useEffect,
+  useMemo,
   useRef,
   useState,
   type PointerEvent as ReactPointerEvent,
@@ -10,6 +11,7 @@ import {
 } from "react";
 import SceneItemView from "./SceneItemView";
 import { useEditor } from "@/lib/editor/store";
+import { buildWallPatternLayer } from "@/lib/editor/wall-pattern";
 import type { SceneItem } from "@/lib/types";
 
 interface Props {
@@ -290,6 +292,12 @@ export default function Stage({ stageRef, onDropProduct, onDropImage, watermark 
 
   const gridPx = 50 * s;
 
+  // Duvar deseni: gerçek santimetreyle ölçeklenen, ızgaradan bağımsız katman.
+  const wallPattern = useMemo(
+    () => buildWallPatternLayer(room.wallPattern, s),
+    [room.wallPattern, s],
+  );
+
   return (
     <div
       ref={containerRef}
@@ -362,6 +370,24 @@ export default function Stage({ stageRef, onDropProduct, onDropImage, watermark 
               }}
             />
 
+            {/* duvar deseni — ızgaradan ayrı katman */}
+            {wallPattern && (
+              <div
+                aria-hidden
+                style={{
+                  position: "absolute",
+                  inset: 0,
+                  pointerEvents: "none",
+                  zIndex: 1,
+                  backgroundImage: wallPattern.backgroundImage,
+                  backgroundSize: wallPattern.backgroundSize,
+                  backgroundPosition: wallPattern.backgroundPosition,
+                  backgroundRepeat: wallPattern.backgroundRepeat,
+                  opacity: wallPattern.opacity,
+                }}
+              />
+            )}
+
             {/* zemin */}
             <div
               style={{
@@ -375,6 +401,7 @@ export default function Stage({ stageRef, onDropProduct, onDropImage, watermark 
                 background: `linear-gradient(to bottom, ${room.floorColor} 0%, ${shadeSimple(room.floorColor)} 100%)`,
                 boxShadow: "inset 0 10px 24px rgba(0,0,0,0.12)",
                 borderTop: view === "2d" ? "1px solid rgba(15,23,42,0.12)" : undefined,
+                zIndex: 2,
               }}
             />
 
@@ -391,6 +418,7 @@ export default function Stage({ stageRef, onDropProduct, onDropImage, watermark 
                   transform: "rotateX(-90deg) translateY(-100%)",
                   background: room.ceilingColor,
                   opacity: 0.95,
+                  zIndex: 2,
                 }}
               />
             )}

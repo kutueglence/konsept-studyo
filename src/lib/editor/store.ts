@@ -2,6 +2,7 @@
 
 import { create } from "zustand";
 import type { Product } from "@/db/schema";
+import { computeBackdropPlacement } from "@/lib/editor/backdrop";
 import {
   DEFAULT_ROOM,
   type DesignMeta,
@@ -45,7 +46,11 @@ interface EditorState {
   setMeta: (patch: Partial<DesignMeta>) => void;
   setRoom: (patch: Partial<RoomConfig>, history?: boolean) => void;
 
-  addProduct: (product: Product, pos?: { x: number; y: number; z?: number }) => string;
+  addProduct: (
+    product: Product,
+    pos?: { x: number; y: number; z?: number },
+    opts?: { backdrop?: boolean },
+  ) => string;
   addCustomImage: (imageUrl: string, filename: string, width?: number, height?: number, pos?: { x: number; y: number }) => string;
   addText: (partial?: Partial<TextSceneItem>) => string;
   addItems: (items: SceneItem[]) => void;
@@ -127,16 +132,54 @@ export const useEditor = create<EditorState>((set, get) => ({
       dirty: true,
     })),
 
-  addProduct: (product, pos) => {
+  addProduct: (product, pos, opts) => {
     const id = uid();
     const state = get();
     const plane = (product.plane as ProductSceneItem["plane"]) ?? "wall";
-    const defaultY =
-      plane === "floor"
-        ? product.height / 2
-        : plane === "ceiling"
-          ? state.room.wallHeight - product.height / 2 - 5
-          : Math.min(state.room.wallHeight * 0.55, state.room.wallHeight - product.height / 2);
+    let width = product.width;
+    let height = product.height;
+    let scale = 1;
+    let x: number;
+    let y: number;
+    let z: number;
+    let layer: number;
+    let baseItems = state.items;
+
+    if (opts?.backdrop) {
+      // Arka fon paneli: duvara sığar (küçülür, küçük panel büyütülmez),
+      // zemine oturur, duvara yaslanır ve tüm süslemelerin arkasına gider.
+      const placement = computeBackdropPlacement(
+        state.room.wallWidth,
+        state.room.wallHeight,
+        product.width,
+        product.height,
+        pos?.x,
+      );
+      scale = placement.scale;
+      x = placement.x;
+      y = placement.y;
+      z = placement.z;
+      const minLayer = state.items.length ? Math.min(...state.items.map((i) => i.layer)) : 2;
+      layer = minLayer - 1;
+      if (layer < -10) {
+        // Katman sayıları çok negatifleşirse sahneyi yeniden normalleştir:
+        // eski en alt 2 olur, yeni panel 1 olur.
+        const shift = 2 - minLayer;
+        baseItems = state.items.map((i) => ({ ...i, layer: i.layer + shift }));
+        layer = 1;
+      }
+    } else {
+      const defaultY =
+        plane === "floor"
+          ? product.height / 2
+          : plane === "ceiling"
+            ? state.room.wallHeight - product.height / 2 - 5
+            : Math.min(state.room.wallHeight * 0.55, state.room.wallHeight - product.height / 2);
+      x = pos?.x ?? state.room.wallWidth / 2;
+      y = pos?.y ?? defaultY;
+      z = pos?.z ?? (plane === "floor" ? Math.min(40, state.room.floorDepth / 4) : 0);
+      layer = state.items.length + 1;
+    }
     const item: ProductSceneItem = {
       id,
       kind: "product",
@@ -145,16 +188,16 @@ export const useEditor = create<EditorState>((set, get) => ({
       shape: product.shape,
       imageUrl: product.imageUrl,
       plane,
-      x: pos?.x ?? state.room.wallWidth / 2,
-      y: pos?.y ?? defaultY,
-      z: pos?.z ?? (plane === "floor" ? Math.min(40, state.room.floorDepth / 4) : 0),
-      width: product.width,
-      height: product.height,
+      x,
+      y,
+      z,
+      width,
+      height,
       rotation: 0,
-      scale: 1,
+      scale,
       color: product.color,
       opacity: 1,
-      layer: state.items.length + 1,
+      layer,
       qty: 1,
       locked: false,
       visible: true,
@@ -164,7 +207,7 @@ export const useEditor = create<EditorState>((set, get) => ({
     set((s) => ({
       past: [...s.past.slice(-MAX_HISTORY), snapshot(s)],
       future: [],
-      items: [...s.items, item],
+      items: [...baseItems, item],
       selectedIds: [id],
       dirty: true,
     }));

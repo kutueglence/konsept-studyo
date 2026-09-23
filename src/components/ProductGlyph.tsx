@@ -1,6 +1,7 @@
 "use client";
 
 import type { CSSProperties } from "react";
+import { panelShapePathD } from "@/lib/editor/panel-image";
 
 export const SHAPE_OPTIONS: { value: string; label: string }[] = [
   { value: "balon", label: "Balon" },
@@ -139,6 +140,36 @@ export default function ProductGlyph({ shape, color, className, style }: Props) 
       break;
     case "panel-dikdortgen":
       content = <rect x="10" y="6" width="80" height="88" rx="6" fill={color} stroke={dark} strokeWidth="2" />;
+      break;
+    case "panel-oval":
+      content = (
+        <>
+          <ellipse cx="50" cy="50" rx="46" ry="42" fill={color} stroke={dark} strokeWidth="2" />
+          <ellipse cx="50" cy="50" rx="36" ry="32" fill={light} opacity="0.55" />
+        </>
+      );
+      break;
+    case "panel-kare":
+      content = (
+        <>
+          <rect x="7" y="7" width="86" height="86" rx="6" fill={color} stroke={dark} strokeWidth="2" />
+          <rect x="17" y="17" width="66" height="66" rx="4" fill={light} opacity="0.55" />
+        </>
+      );
+      break;
+    case "panel-dalga":
+      content = (
+        <>
+          <path
+            d={panelShapePathD("panel-dalga", 100, 100)}
+            fill={color}
+            stroke={dark}
+            strokeWidth="2"
+            transform="translate(0,0)"
+          />
+          <path d={panelShapePathD("panel-dalga", 64, 64)} fill={light} opacity="0.55" transform="translate(18,18)" />
+        </>
+      );
       break;
     case "cicek":
       content = (

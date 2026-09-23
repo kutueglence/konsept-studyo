@@ -1,12 +1,13 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import Stage from "./Stage";
 import LeftPanel, { type CategoryNode, type TemplateSummary } from "./LeftPanel";
 import InspectorPanel from "./InspectorPanel";
 import { buildMaterialLines, totalCount, totalOf, useEditor } from "@/lib/editor/store";
+import { isBackdropCategoryName } from "@/lib/editor/backdrop";
 import { DEFAULT_ROOM, EVENT_TYPES, type RoomConfig, type SceneItem } from "@/lib/types";
 import type { Product } from "@/db/schema";
 
@@ -164,13 +165,23 @@ export default function EditorClient({ designId }: Props) {
   }, [clearSelection, commit, deleteItems, duplicateItems, moveBy, redo, select, undo]);
 
   /* -------------------------------- işlemler ------------------------------- */
+  /** "Konsept / Arka Fon Panelleri" kategorisindeki ürünler → otomatik yerleşir. */
+  const backdropCategoryIds = useMemo(
+    () => new Set(categories.filter((c) => isBackdropCategoryName(c.name)).map((c) => c.id)),
+    [categories],
+  );
+  const isBackdropProduct = useCallback(
+    (p: Product) => backdropCategoryIds.has(p.categoryId ?? -1),
+    [backdropCategoryIds],
+  );
+
   const handleDropProduct = useCallback(
     ({ productId, x, y }: { productId: number; x: number; y: number }) => {
       const product = products.find((p) => p.id === productId);
       if (!product) return;
-      addProduct(product, { x, y });
+      addProduct(product, { x, y }, { backdrop: isBackdropProduct(product) });
     },
-    [addProduct, products],
+    [addProduct, isBackdropProduct, products],
   );
 
   const handleDropImage = useCallback(
@@ -390,7 +401,7 @@ export default function EditorClient({ designId }: Props) {
             loading={loading}
             templates={templates}
             onAddProduct={(p) => {
-              addProduct(p);
+              addProduct(p, undefined, { backdrop: isBackdropProduct(p) });
               setMobilePanel("none");
             }}
             onApplyTemplate={(t) => {

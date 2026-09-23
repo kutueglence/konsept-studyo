@@ -5,6 +5,12 @@ import ProductGlyph from "@/components/ProductGlyph";
 import ImageUploadTab from "./ImageUploadTab";
 import { useEditor } from "@/lib/editor/store";
 import { PALETTES, FONT_OPTIONS } from "@/lib/palettes";
+import { isBackdropCategoryName } from "@/lib/editor/backdrop";
+import {
+  WALL_PATTERN_OPTIONS,
+  type WallPatternConfig,
+  type WallPatternType,
+} from "@/lib/editor/wall-pattern";
 import type { Product } from "@/db/schema";
 import type { SceneItem } from "@/lib/types";
 
@@ -90,6 +96,10 @@ export default function LeftPanel({
   }, [products, query, catId, subId, onlyStock, maxPrice]);
 
   const activeCat = categories.find((c) => c.id === catId);
+  const backdropCatIds = useMemo(
+    () => new Set(categories.filter((c) => isBackdropCategoryName(c.name)).map((c) => c.id)),
+    [categories],
+  );
 
   return (
     <div className="flex h-full flex-col bg-white">
@@ -214,6 +224,11 @@ export default function LeftPanel({
                     <span className="line-clamp-2 text-[11px] font-semibold leading-tight text-slate-700">
                       {p.name}
                     </span>
+                    {backdropCatIds.has(p.categoryId ?? -1) && (
+                      <span className="rounded bg-amber-50 px-1.5 py-0.5 text-[10px] font-medium text-amber-700 ring-1 ring-amber-200">
+                        Arka fon · otomatik yerleşir
+                      </span>
+                    )}
                     <span className="text-[11px] text-slate-500">
                       {p.width}×{p.height} cm
                     </span>
@@ -384,6 +399,91 @@ export default function LeftPanel({
               </button>
             ))
           )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function WallPatternSection() {
+  const room = useEditor((s) => s.room);
+  const setRoom = useEditor((s) => s.setRoom);
+  const pattern = room.wallPattern;
+
+  const setPattern = (patch: Partial<WallPatternConfig>) =>
+    setRoom({ wallPattern: { ...pattern, ...patch } });
+
+  const selectType = (value: WallPatternType) => {
+    const preset = WALL_PATTERN_OPTIONS.find((o) => o.value === value);
+    setRoom({
+      wallPattern: {
+        ...pattern,
+        type: value,
+        spacing: preset?.spacing ?? pattern.spacing,
+        thickness: preset?.thickness ?? pattern.thickness,
+      },
+    });
+  };
+
+  return (
+    <div className="rounded-xl border border-slate-200 p-3">
+      <h3 className="mb-2 text-[11px] font-bold uppercase tracking-wide text-slate-500">
+        Duvar Tipi &amp; Desen
+      </h3>
+      <div className="grid grid-cols-2 gap-1.5">
+        {WALL_PATTERN_OPTIONS.map((o) => (
+          <button
+            key={o.value}
+            onClick={() => selectType(o.value)}
+            className={`flex items-center gap-1.5 rounded-lg border px-2 py-1.5 text-left text-[11px] font-medium transition ${
+              pattern.type === o.value
+                ? "border-indigo-400 bg-indigo-50 text-indigo-700"
+                : "border-slate-200 text-slate-600 hover:border-indigo-200 hover:bg-slate-50"
+            }`}
+          >
+            <span aria-hidden className="text-sm leading-none">
+              {o.icon}
+            </span>
+            <span className="min-w-0 truncate">{o.label}</span>
+          </button>
+        ))}
+      </div>
+
+      {pattern.type !== "duz" && (
+        <div className="mt-3 space-y-2.5 border-t border-slate-100 pt-3">
+          <div className="grid grid-cols-2 gap-2">
+            <NumberField
+              label="Desen Aralığı (cm)"
+              value={pattern.spacing}
+              onChange={(v) => setPattern({ spacing: Math.max(2, Math.min(300, v)) })}
+            />
+            <NumberField
+              label={pattern.type === "puantiye" ? "Nokta Kalınlığı (cm)" : "Çizgi Kalınlığı (cm)"}
+              value={pattern.thickness}
+              onChange={(v) => setPattern({ thickness: Math.max(0.2, Math.min(60, v)) })}
+            />
+          </div>
+          <ColorField
+            label={pattern.type === "tugla" ? "Derz Rengi" : "Desen Rengi"}
+            value={pattern.color}
+            onChange={(v) => setPattern({ color: v })}
+          />
+          <div>
+            <span className="label">Belirginlik %{Math.round(pattern.strength * 100)}</span>
+            <input
+              type="range"
+              min={0.05}
+              max={1}
+              step={0.05}
+              value={pattern.strength}
+              onChange={(e) => setPattern({ strength: Number(e.target.value) })}
+              className="w-full accent-indigo-600"
+            />
+          </div>
+          <p className="text-[10px] leading-relaxed text-slate-400">
+            Desen gerçek santimetreyle çizilir; yakınlaştırdığınızda duvarla birlikte büyür,
+            mavi ızgaradan bağımsızdır ve konsept kaydedildiğinde birlikte saklanır.
+          </p>
         </div>
       )}
     </div>
