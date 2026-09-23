@@ -1,7 +1,8 @@
 import { NextResponse } from "next/server";
 import { and, asc, eq, ilike, or, type SQL } from "drizzle-orm";
 import { db } from "@/db";
-import { products } from "@/db/schema";
+import { categories, products, subcategories } from "@/db/schema";
+import { lightweightProductImage, sanitizeProductInput } from "@/lib/server/product-sanitize";
 
 export const dynamic = "force-dynamic";
 
@@ -10,6 +11,8 @@ export async function GET(request: Request) {
   const search = url.searchParams.get("q")?.trim();
   const categoryId = url.searchParams.get("categoryId");
   const subcategoryId = url.searchParams.get("subcategoryId");
+  // Yönetim paneli (all=1) ham görselleri alır; stüdyo listesi hafiftir —
+  // büyük görseller /api/products/{id}/image üzerinden sürüm imzasıyla sunulur.
   const includeInactive = url.searchParams.get("all") === "1";
 
   const filters: SQL[] = [];
@@ -33,42 +36,38 @@ export async function GET(request: Request) {
     .where(filters.length ? and(...filters) : undefined)
     .orderBy(asc(products.categoryId), asc(products.name));
 
-  return NextResponse.json({ products: rows });
-}
-
-function sanitize(body: Record<string, unknown>) {
-  const num = (v: unknown, def = 0) => {
-    const n = Number(v);
-    return Number.isFinite(n) ? n : def;
-  };
-  return {
-    name: String(body.name ?? "").trim(),
-    categoryId: body.categoryId ? Number(body.categoryId) : null,
-    subcategoryId: body.subcategoryId ? Number(body.subcategoryId) : null,
-    imageUrl: (body.imageUrl as string) || null,
-    modelUrl: (body.modelUrl as string) || null,
-    shape: String(body.shape ?? "kutu"),
-    width: num(body.width, 50),
-    height: num(body.height, 50),
-    depth: num(body.depth, 10),
-    color: String(body.color ?? "#f0abfc"),
-    colorEditable: body.colorEditable !== false,
-    material: (body.material as string) || null,
-    price: num(body.price, 0),
-    stock: Math.round(num(body.stock, 0)),
-    description: (body.description as string) || null,
-    plane: String(body.plane ?? "wall"),
-    tags: (body.tags as string) || null,
-    isActive: body.isActive !== false,
-  };
+  return NextResponse.json({
+    products: includeInactive ? rows : rows.map((r) => ({ ...r, imageUrl: lightweightProductImage(r) })),
+  });
 }
 
 export async function POST(request: Request) {
-  const body = await request.json();
-  const data = sanitize(body);
-  if (!data.name) {
-    return NextResponse.json({ error: "Ürün adı zorunludur." }, { status: 400 });
+  let body: Record<string, unknown>;
+  try {
+    body = (await request.json()) as Record<string, unknown>;
+  } catch {
+    return NextResponse.json({ error: "Geçersiz istek gövdesi." }, { status: 400 });
   }
+  const result = sanitizeProductInput(body);
+  if (!result.ok) return NextResponse.json({ error: result.error }, { status: 400 });
+  const data = result.data;
+
+  if (data.categoryId !== null) {
+    const [cat] = await db.select({ id: categories.id }).from(categories).where(eq(categories.id, data.categoryId));
+    if (!cat) {
+      return NextResponse.json({ error: "Seçili kategori bulunamadı." }, { status: 400 });
+    }
+  }
+  if (data.subcategoryId !== null) {
+    const [sub] = await db
+      .select({ id: categories.id })
+      .from(categories)
+      .where(eq(categories.id, data.subcategoryId));
+    if (!sub) {
+      return NextResponse.json({ error: "Seçili alt kategori bulunamadı." }, { status: 400 });
+    }
+  }
+
   const [row] = await db.insert(products).values(data).returning();
   return NextResponse.json({ product: row }, { status: 201 });
 }

@@ -1,8 +1,18 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type DragEvent } from "react";
 import ProductGlyph, { SHAPE_OPTIONS } from "@/components/ProductGlyph";
 import { PALETTES } from "@/lib/palettes";
+import { isBackdropCategoryName } from "@/lib/editor/backdrop";
+import {
+  PANEL_SHAPE_OPTIONS,
+  isHeightLockedPanelShape,
+  isPanelShape,
+  panelShapePathD,
+  validatePanelImageFile,
+  type PanelShape,
+} from "@/lib/editor/panel-image";
+import { loadImageElement, renderPanelImage } from "@/lib/editor/panel-render";
 import type { Product } from "@/db/schema";
 
 interface CategoryNode {
@@ -55,6 +65,20 @@ const emptyForm: FormState = {
   isActive: true,
 };
 
+interface PanelSource {
+  img: HTMLImageElement;
+  w: number;
+  h: number;
+  name: string;
+}
+
+interface PanelRenderInfo {
+  dataUrl: string;
+  width: number;
+  height: number;
+  warning: boolean;
+}
+
 export default function UrunlerPage() {
   const [products, setProducts] = useState<Product[]>([]);
   const [categories, setCategories] = useState<CategoryNode[]>([]);
@@ -63,6 +87,14 @@ export default function UrunlerPage() {
   const [filterCat, setFilterCat] = useState("");
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState("");
+
+  /* --------------------------- panel (arka fon) durumu --------------------- */
+  const [panelSource, setPanelSource] = useState<PanelSource | null>(null);
+  const [panelFit, setPanelFit] = useState<"contain" | "cover">("cover");
+  const [panelFocus, setPanelFocus] = useState({ x: 0.5, y: 0.5 });
+  const [panelRender, setPanelRender] = useState<PanelRenderInfo | null>(null);
+  const [dragOver, setDragOver] = useState(false);
+  const fileRef = useRef<HTMLInputElement | null>(null);
 
   const load = useCallback(async () => {
     const [p, c] = await Promise.all([
@@ -82,6 +114,9 @@ export default function UrunlerPage() {
     [categories, form.categoryId],
   );
 
+  const selectedCategory = categories.find((c) => String(c.id) === form.categoryId);
+  const isPanelCategory = isBackdropCategoryName(selectedCategory?.name);
+
   const filtered = useMemo(() => {
     const q = query.trim().toLocaleLowerCase("tr");
     return products.filter((p) => {
@@ -93,6 +128,109 @@ export default function UrunlerPage() {
 
   const set = <K extends keyof FormState>(k: K, v: FormState[K]) => setForm((f) => ({ ...f, [k]: v }));
 
+  /*
+   * Kategori panel kategorisine geçince form panel alanına dönüşür. Efekt
+   * yerine türetilmiş değerler kullanılır: panel modunda düzlem daima duvar,
+   * biçim geçersizse dikdörtgen panel, derinlik hiç girilmemişse 6 cm'dir.
+   */
+  const panelModeShape = (isPanelShape(form.shape) ? form.shape : "panel-dikdortgen") as PanelShape;
+  const effectiveShape = isPanelCategory ? panelModeShape : form.shape;
+  const effectivePlane = isPanelCategory ? "wall" : form.plane;
+  const effectiveDepth = isPanelCategory && form.depth === "10" ? "6" : form.depth;
+
+  /* Yuvarlak / kare panelde yükseklik genişliğe kilitlenir. */
+  const lockedHeight = isPanelCategory && isHeightLockedPanelShape(effectiveShape as PanelShape);
+  const effectiveHeight = lockedHeight ? form.width : form.height;
+
+  /* ------------------------------ panel görseli ---------------------------- */
+  const acceptPanelFile = useCallback(async (file: File) => {
+    const check = validatePanelImageFile(file);
+    if (!check.ok) {
+      setMsg(check.error);
+      return;
+    }
+    try {
+      const dataUrl = await new Promise<string>((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(String(reader.result));
+        reader.onerror = () => reject(new Error("okunamadı"));
+        reader.readAsDataURL(file);
+      });
+      const img = await loadImageElement(dataUrl);
+      setPanelSource({ img, w: img.naturalWidth, h: img.naturalHeight, name: file.name });
+      setMsg("");
+    } catch {
+      setMsg("Görsel açılamadı.");
+    }
+  }, []);
+
+  const onDropFile = useCallback(
+    (e: DragEvent<HTMLDivElement>) => {
+      e.preventDefault();
+      setDragOver(false);
+      const file = e.dataTransfer.files?.[0];
+      if (file) acceptPanelFile(file);
+    },
+    [acceptPanelFile],
+  );
+
+  /* Ölçü / biçim / renk / mod / odak değişince önizlemeyi yeniden üret. */
+  useEffect(() => {
+    if (!isPanelCategory || !panelSource) return;
+    let alive = true;
+    renderPanelImage(panelSource.img, {
+      shape: effectiveShape as PanelShape,
+      panelW: Number(form.width) || 120,
+      panelH: Number(effectiveHeight) || 180,
+      mode: panelFit,
+      focusX: panelFocus.x,
+      focusY: panelFocus.y,
+      fillColor: form.color,
+      maxSide: 1600,
+    })
+      .then((result) => {
+        if (!alive) return;
+        setPanelRender({
+          dataUrl: result.dataUrl,
+          width: result.width,
+          height: result.height,
+          warning: result.warning,
+        });
+        setForm((f) => ({ ...f, imageUrl: result.dataUrl }));
+      })
+      .catch(() => {
+        if (alive) setMsg("Panel görseli üretilirken hata oluştu.");
+      });
+    return () => {
+      alive = false;
+    };
+  }, [isPanelCategory, panelSource, effectiveShape, form.width, effectiveHeight, form.color, panelFit, panelFocus]);
+
+  /* Görselin oranını ölçülere uygula. */
+  const applyImageRatio = () => {
+    if (!panelSource || lockedHeight) return;
+    const ratio = panelSource.h / panelSource.w;
+    const w = Math.max(1, Number(form.width) || 120);
+    let height = Math.round(w * ratio);
+    if (height > 400) {
+      height = 400;
+      setForm((f) => ({
+        ...f,
+        height: String(height),
+        width: String(Math.max(1, Math.round(height / ratio))),
+      }));
+    } else {
+      setForm((f) => ({ ...f, height: String(height) }));
+    }
+  };
+
+  const resetPanelState = () => {
+    setPanelSource(null);
+    setPanelRender(null);
+    setPanelFit("cover");
+    setPanelFocus({ x: 0.5, y: 0.5 });
+  };
+
   const submit = async () => {
     if (!form.name.trim()) {
       setMsg("Ürün adı zorunludur.");
@@ -101,11 +239,13 @@ export default function UrunlerPage() {
     setBusy(true);
     const payload = {
       ...form,
+      shape: effectiveShape,
+      plane: effectivePlane,
       categoryId: form.categoryId || null,
       subcategoryId: form.subcategoryId || null,
       width: Number(form.width),
-      height: Number(form.height),
-      depth: Number(form.depth),
+      height: Number(effectiveHeight),
+      depth: Number(effectiveDepth),
       price: Number(form.price),
       stock: Number(form.stock),
     };
@@ -118,9 +258,11 @@ export default function UrunlerPage() {
     if (res.ok) {
       setMsg(form.id ? "Ürün güncellendi ✓" : "Ürün eklendi ✓");
       setForm(emptyForm);
+      resetPanelState();
       load();
     } else {
-      setMsg("İşlem başarısız.");
+      const json = await res.json().catch(() => null);
+      setMsg(json?.error ?? "İşlem başarısız.");
     }
   };
 
@@ -146,6 +288,7 @@ export default function UrunlerPage() {
       modelUrl: p.modelUrl ?? "",
       isActive: p.isActive,
     });
+    resetPanelState();
     window.scrollTo({ top: 0, behavior: "smooth" });
   };
 
@@ -161,6 +304,8 @@ export default function UrunlerPage() {
     reader.readAsDataURL(file);
   };
 
+  const panelShape = effectiveShape as PanelShape;
+
   return (
     <div className="space-y-5">
       <div className="flex flex-wrap items-center justify-between gap-3">
@@ -174,149 +319,477 @@ export default function UrunlerPage() {
       <div className="card p-5">
         <h2 className="mb-3 text-sm font-bold text-slate-800">
           {form.id ? `Ürünü Düzenle #${form.id}` : "Yeni Ürün Ekle"}
+          {isPanelCategory && (
+            <span className="ml-2 rounded-md bg-amber-50 px-2 py-0.5 text-[11px] font-semibold text-amber-700 ring-1 ring-amber-200">
+              🧱 Arka Fon Paneli Modu
+            </span>
+          )}
         </h2>
-        <div className="grid gap-3 md:grid-cols-4">
-          <L label="Ürün Adı" className="md:col-span-2">
-            <input className="input" value={form.name} onChange={(e) => set("name", e.target.value)} />
-          </L>
-          <L label="Kategori">
-            <select
-              className="input"
-              value={form.categoryId}
-              onChange={(e) => {
-                set("categoryId", e.target.value);
-                set("subcategoryId", "");
-              }}
-            >
-              <option value="">Seçiniz</option>
-              {categories.map((c) => (
-                <option key={c.id} value={c.id}>
-                  {c.icon} {c.name}
-                </option>
-              ))}
-            </select>
-          </L>
-          <L label="Alt Kategori">
-            <select className="input" value={form.subcategoryId} onChange={(e) => set("subcategoryId", e.target.value)}>
-              <option value="">Seçiniz</option>
-              {subs.map((s) => (
-                <option key={s.id} value={s.id}>
-                  {s.name}
-                </option>
-              ))}
-            </select>
-          </L>
 
-          <L label="Genişlik (cm)">
-            <input className="input" type="number" value={form.width} onChange={(e) => set("width", e.target.value)} />
-          </L>
-          <L label="Yükseklik (cm)">
-            <input className="input" type="number" value={form.height} onChange={(e) => set("height", e.target.value)} />
-          </L>
-          <L label="Derinlik (cm)">
-            <input className="input" type="number" value={form.depth} onChange={(e) => set("depth", e.target.value)} />
-          </L>
-          <L label="Yerleşim Düzlemi">
-            <select className="input" value={form.plane} onChange={(e) => set("plane", e.target.value)}>
-              <option value="wall">Duvar</option>
-              <option value="floor">Zemin</option>
-              <option value="ceiling">Tavan</option>
-            </select>
-          </L>
+        {isPanelCategory ? (
+          /* ------------------------- PANEL FORMU ------------------------- */
+          <div className="grid gap-4 lg:grid-cols-2">
+            <div className="grid gap-3 md:grid-cols-2">
+              <L label="Panel Adı" className="md:col-span-2">
+                <input className="input" value={form.name} onChange={(e) => set("name", e.target.value)} placeholder="Örn. Çiçekli Kemer Panel" />
+              </L>
+              <L label="Kategori">
+                <select
+                  className="input"
+                  value={form.categoryId}
+                  onChange={(e) => {
+                    set("categoryId", e.target.value);
+                    set("subcategoryId", "");
+                  }}
+                >
+                  <option value="">Seçiniz</option>
+                  {categories.map((c) => (
+                    <option key={c.id} value={c.id}>
+                      {c.icon} {c.name}
+                    </option>
+                  ))}
+                </select>
+              </L>
+              <L label="Alt Kategori">
+                <select className="input" value={form.subcategoryId} onChange={(e) => set("subcategoryId", e.target.value)}>
+                  <option value="">Seçiniz</option>
+                  {subs.map((s) => (
+                    <option key={s.id} value={s.id}>
+                      {s.name}
+                    </option>
+                  ))}
+                </select>
+              </L>
 
-          <L label="Kiralama Fiyatı (₺)">
-            <input className="input" type="number" value={form.price} onChange={(e) => set("price", e.target.value)} />
-          </L>
-          <L label="Stok / Adet">
-            <input className="input" type="number" value={form.stock} onChange={(e) => set("stock", e.target.value)} />
-          </L>
-          <L label="Malzeme">
-            <input className="input" value={form.material} onChange={(e) => set("material", e.target.value)} placeholder="MDF, Pleksi, Lateks..." />
-          </L>
-          <L label="Etiketler">
-            <input className="input" value={form.tags} onChange={(e) => set("tags", e.target.value)} placeholder="pastel, gold, unicorn" />
-          </L>
+              <L label="Panel Biçimi" className="md:col-span-2">
+                <div className="grid grid-cols-3 gap-1.5">
+                  {PANEL_SHAPE_OPTIONS.map((o) => (
+                    <button
+                      key={o.value}
+                      type="button"
+                      onClick={() => {
+                        const wasLocked = lockedHeight;
+                        set("shape", o.value);
+                        // kilidi açarken/kilitlerken yüksekliği genişlikle eşler
+                        if (isHeightLockedPanelShape(o.value) || wasLocked) {
+                          set("height", form.width);
+                        }
+                      }}
+                      className={`flex flex-col items-center gap-1 rounded-lg border px-2 py-2 text-[11px] font-medium transition ${
+                        effectiveShape === o.value
+                          ? "border-indigo-400 bg-indigo-50 text-indigo-700"
+                          : "border-slate-200 text-slate-600 hover:border-indigo-200 hover:bg-slate-50"
+                      }`}
+                    >
+                      <svg viewBox="0 0 100 100" className="h-8 w-8" aria-hidden>
+                        <path d={panelShapePathD(o.value, 100, 100)} fill="currentColor" opacity={0.25} />
+                        <path
+                          d={panelShapePathD(o.value, 100, 100)}
+                          fill="none"
+                          stroke="currentColor"
+                          strokeWidth={5}
+                        />
+                      </svg>
+                      {o.label}
+                    </button>
+                  ))}
+                </div>
+              </L>
 
-          <L label="Şekil (görsel yoksa)">
-            <select className="input" value={form.shape} onChange={(e) => set("shape", e.target.value)}>
-              {SHAPE_OPTIONS.map((s) => (
-                <option key={s.value} value={s.value}>
-                  {s.label}
-                </option>
-              ))}
-            </select>
-          </L>
-          <L label="Renk">
-            <div className="flex gap-2">
-              <input
-                type="color"
-                className="h-9 w-12 cursor-pointer rounded-lg border border-slate-200"
-                value={/^#[0-9a-fA-F]{6}$/.test(form.color) ? form.color : "#cccccc"}
-                onChange={(e) => set("color", e.target.value)}
-              />
-              <input className="input" value={form.color} onChange={(e) => set("color", e.target.value)} />
-            </div>
-          </L>
-          <L label="Görsel Yükle (PNG/JPG)">
-            <input
-              type="file"
-              accept="image/*"
-              className="input py-1.5 text-xs"
-              onChange={(e) => e.target.files?.[0] && onImage(e.target.files[0])}
-            />
-          </L>
-          <L label="3D Model Bağlantısı (.glb)">
-            <input className="input" value={form.modelUrl} onChange={(e) => set("modelUrl", e.target.value)} placeholder="https://..." />
-          </L>
-
-          <L label="Açıklama" className="md:col-span-3">
-            <input className="input" value={form.description} onChange={(e) => set("description", e.target.value)} />
-          </L>
-          <div className="flex items-end gap-2">
-            <button className={`chip ${form.colorEditable ? "chip-active" : ""}`} onClick={() => set("colorEditable", !form.colorEditable)}>
-              🎨 Rengi değiştirilebilir
-            </button>
-            <button className={`chip ${form.isActive ? "chip-active" : ""}`} onClick={() => set("isActive", !form.isActive)}>
-              {form.isActive ? "Aktif" : "Pasif"}
-            </button>
-          </div>
-        </div>
-
-        <div className="mt-4 flex flex-wrap items-center gap-3">
-          <div className="flex h-16 w-16 items-center justify-center rounded-xl bg-slate-50">
-            {form.imageUrl ? (
-              // eslint-disable-next-line @next/next/no-img-element
-              <img src={form.imageUrl} alt="önizleme" className="h-full w-full object-contain" />
-            ) : (
-              <ProductGlyph shape={form.shape} color={form.color} style={{ width: "80%", height: "80%" }} />
-            )}
-          </div>
-          <div className="flex flex-1 flex-wrap gap-1">
-            {PALETTES.flatMap((p) => p.colors)
-              .slice(0, 24)
-              .map((c) => (
-                <button
-                  key={c}
-                  onClick={() => set("color", c)}
-                  className="h-6 w-6 rounded-md border border-slate-200"
-                  style={{ background: c }}
+              <L label={`Genişlik (cm)${lockedHeight ? " · kare/yuvarlak" : ""}`}>
+                <input
+                  className="input"
+                  type="number"
+                  min={1}
+                  value={form.width}
+                  onChange={(e) => {
+                    set("width", e.target.value);
+                    if (lockedHeight) set("height", e.target.value);
+                  }}
                 />
-              ))}
+              </L>
+              <L label={lockedHeight ? "Yükseklik (genişliğe kilitli)" : "Yükseklik (cm)"}>
+                <input
+                  className="input"
+                  type="number"
+                  min={1}
+                  value={effectiveHeight}
+                  disabled={lockedHeight}
+                  onChange={(e) => set("height", e.target.value)}
+                />
+              </L>
+              <L label="Derinlik (cm)">
+                <input className="input" type="number" value={effectiveDepth} onChange={(e) => set("depth", e.target.value)} />
+              </L>
+              <L label="Yerleşim Düzlemi">
+                <select className="input" value="wall" disabled>
+                  <option value="wall">Duvar (arka fon)</option>
+                </select>
+              </L>
+
+              <L label="Kiralama Fiyatı (₺)">
+                <input className="input" type="number" value={form.price} onChange={(e) => set("price", e.target.value)} />
+              </L>
+              <L label="Stok / Adet">
+                <input className="input" type="number" value={form.stock} onChange={(e) => set("stock", e.target.value)} />
+              </L>
+              <L label="Malzeme">
+                <input className="input" value={form.material} onChange={(e) => set("material", e.target.value)} placeholder="MDF, Pleksi, Kumaş..." />
+              </L>
+              <L label="Etiketler">
+                <input className="input" value={form.tags} onChange={(e) => set("tags", e.target.value)} placeholder="çiçek, gold, kemer" />
+              </L>
+
+              <L label="Panel Fon Rengi" className="md:col-span-2">
+                <div className="flex gap-2">
+                  <input
+                    type="color"
+                    className="h-9 w-12 cursor-pointer rounded-lg border border-slate-200"
+                    value={/^#[0-9a-fA-F]{6}$/.test(form.color) ? form.color : "#cccccc"}
+                    onChange={(e) => set("color", e.target.value)}
+                  />
+                  <input className="input" value={form.color} onChange={(e) => set("color", e.target.value)} />
+                </div>
+                <p className="mt-1 text-[10px] text-slate-400">
+                  “Tamamını göster” modunda görselin boşlukları bu renkle doldurulur.
+                </p>
+              </L>
+
+              <L label="Açıklama" className="md:col-span-2">
+                <input className="input" value={form.description} onChange={(e) => set("description", e.target.value)} />
+              </L>
+              <div className="flex items-end gap-2 md:col-span-2">
+                <button className={`chip ${form.isActive ? "chip-active" : ""}`} onClick={() => set("isActive", !form.isActive)}>
+                  {form.isActive ? "Aktif" : "Pasif"}
+                </button>
+              </div>
+            </div>
+
+            {/* -------------------- görsel + canlı önizleme -------------------- */}
+            <div className="space-y-3">
+              <div
+                onDragOver={(e) => {
+                  e.preventDefault();
+                  setDragOver(true);
+                }}
+                onDragLeave={() => setDragOver(false)}
+                onDrop={onDropFile}
+                className={`rounded-xl border-2 border-dashed p-4 text-center transition ${
+                  dragOver ? "border-indigo-400 bg-indigo-50" : "border-slate-300 bg-slate-50/50"
+                }`}
+              >
+                <p className="text-2xl">🖼️</p>
+                <p className="mt-1 text-sm font-semibold text-slate-700">Görseli seç veya sürükle</p>
+                <p className="mt-1 text-[11px] text-slate-500">PNG, JPG veya WebP · en fazla 20 MB</p>
+                <button type="button" className="btn-primary mt-2 px-4 py-1.5 text-xs" onClick={() => fileRef.current?.click()}>
+                  📁 Dosya Seç
+                </button>
+                <input
+                  ref={fileRef}
+                  type="file"
+                  accept="image/png,image/jpeg,image/webp"
+                  className="hidden"
+                  onChange={(e) => {
+                    const file = e.target.files?.[0];
+                    if (file) acceptPanelFile(file);
+                    e.target.value = "";
+                  }}
+                />
+                {panelSource && (
+                  <p className="mt-2 truncate text-[11px] text-slate-500">
+                    Kaynak: {panelSource.name} · {panelSource.w}×{panelSource.h} px
+                  </p>
+                )}
+              </div>
+
+              <div>
+                <span className="label">Görsel Yerleşimi</span>
+                <div className="flex gap-1.5">
+                  <button
+                    type="button"
+                    className={`chip ${panelFit === "contain" ? "chip-active" : ""}`}
+                    onClick={() => setPanelFit("contain")}
+                  >
+                    🔲 Tamamını göster
+                  </button>
+                  <button
+                    type="button"
+                    className={`chip ${panelFit === "cover" ? "chip-active" : ""}`}
+                    onClick={() => setPanelFit("cover")}
+                  >
+                    ✂️ Alanı doldur
+                  </button>
+                </div>
+                <p className="mt-1 text-[10px] leading-relaxed text-slate-400">
+                  {panelFit === "contain"
+                    ? "Kırpma yok; görselin tamamı panelde görünür, boşluklar fon rengiyle doldurulur."
+                    : "Görsel paneli tamamen doldurur; odak kaydırıcılarıyla hangi tarafın kalacağını seçersiniz."}
+                </p>
+              </div>
+
+              {panelFit === "cover" && (
+                <div className="space-y-2 rounded-xl border border-slate-200 p-3">
+                  <div>
+                    <span className="label">Yatay Odak: {Math.round(panelFocus.x * 100)}%</span>
+                    <input
+                      type="range"
+                      min={0}
+                      max={1}
+                      step={0.05}
+                      value={panelFocus.x}
+                      onChange={(e) => setPanelFocus((f) => ({ ...f, x: Number(e.target.value) }))}
+                      className="w-full accent-indigo-600"
+                    />
+                    <div className="flex justify-between text-[10px] text-slate-400">
+                      <span>sol kalır</span>
+                      <span>ortalanır</span>
+                      <span>sağ kalır</span>
+                    </div>
+                  </div>
+                  <div>
+                    <span className="label">Dikey Odak: {Math.round(panelFocus.y * 100)}%</span>
+                    <input
+                      type="range"
+                      min={0}
+                      max={1}
+                      step={0.05}
+                      value={panelFocus.y}
+                      onChange={(e) => setPanelFocus((f) => ({ ...f, y: Number(e.target.value) }))}
+                      className="w-full accent-indigo-600"
+                    />
+                    <div className="flex justify-between text-[10px] text-slate-400">
+                      <span>üst kalır</span>
+                      <span>ortalanır</span>
+                      <span>alt kalır</span>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              <div className="rounded-xl border border-slate-200 p-3">
+                <div className="mb-2 flex items-center justify-between">
+                  <span className="label mb-0">Canlı Önizleme</span>
+                  {panelRender && (
+                    <span className="text-[10px] font-medium text-slate-400">
+                      {panelRender.width}×{panelRender.height} px · WebP
+                    </span>
+                  )}
+                </div>
+                <div
+                  className="flex min-h-[180px] items-center justify-center rounded-lg bg-slate-50 p-3"
+                  style={{
+                    backgroundImage:
+                      "linear-gradient(45deg, #eef1f5 25%, transparent 25%, transparent 75%, #eef1f5 75%), linear-gradient(45deg, #eef1f5 25%, transparent 25%, transparent 75%, #eef1f5 75%)",
+                    backgroundSize: "16px 16px",
+                    backgroundPosition: "0 0, 8px 8px",
+                  }}
+                >
+                  {panelRender?.dataUrl || form.imageUrl ? (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img
+                      src={panelRender?.dataUrl || form.imageUrl}
+                      alt="panel önizleme"
+                      className="max-h-[200px] max-w-full object-contain drop-shadow-md"
+                    />
+                  ) : (
+                    <ProductGlyph shape={panelShape} color={form.color} style={{ width: 90, height: 120 }} />
+                  )}
+                </div>
+                {panelRender?.warning && (
+                  <p className="mt-2 rounded-lg bg-amber-50 px-3 py-2 text-[11px] font-medium text-amber-700">
+                    ⚠️ Kaynak görsel bu panel ölçüsü için küçük; görüntü netliği için daha büyük
+                    çözünürlüklü (en az {Math.round((Number(form.width) || 120) * 8)} px genişlik
+                    önerilir) bir fotoğraf yükleyin. Görsel bulanıklaştırmak yerine olduğu gibi korunur.
+                  </p>
+                )}
+                <p className="mt-2 text-[10px] leading-relaxed text-slate-400">
+                  Görsel, panelin en/boy oranında üretilir — uzatılmaz, yayılmaz. Kaynak küçükse
+                  büyütülmez. Sahnenin hafif kalması için WebP&apos;ye sıkıştırılır.
+                </p>
+                <div className="mt-2 flex flex-wrap gap-1.5">
+                  <button type="button" className="btn-soft px-2.5 py-1.5 text-xs" onClick={applyImageRatio} disabled={!panelSource || lockedHeight}>
+                    📐 Görselin oranını ölçülere uygula
+                  </button>
+                  {form.imageUrl && (
+                    <button
+                      type="button"
+                      className="btn-ghost text-xs"
+                      onClick={() => {
+                        set("imageUrl", "");
+                        resetPanelState();
+                      }}
+                    >
+                      Görseli kaldır
+                    </button>
+                  )}
+                </div>
+              </div>
+
+              <div className="flex flex-wrap items-center gap-2">
+                <button className="btn-primary" disabled={busy} onClick={submit}>
+                  {form.id ? "💾 Güncelle" : "➕ Paneli Ekle"}
+                </button>
+                {form.id && (
+                  <button
+                    className="btn-soft"
+                    onClick={() => {
+                      setForm(emptyForm);
+                      resetPanelState();
+                    }}
+                  >
+                    Vazgeç
+                  </button>
+                )}
+              </div>
+            </div>
           </div>
-          {form.imageUrl && (
-            <button className="btn-ghost text-xs" onClick={() => set("imageUrl", "")}>
-              Görseli kaldır
-            </button>
-          )}
-          <button className="btn-primary" disabled={busy} onClick={submit}>
-            {form.id ? "💾 Güncelle" : "➕ Ürünü Ekle"}
-          </button>
-          {form.id && (
-            <button className="btn-soft" onClick={() => setForm(emptyForm)}>
-              Vazgeç
-            </button>
-          )}
-        </div>
+        ) : (
+          /* ------------------------- STANDART FORM ------------------------- */
+          <>
+            <div className="grid gap-3 md:grid-cols-4">
+              <L label="Ürün Adı" className="md:col-span-2">
+                <input className="input" value={form.name} onChange={(e) => set("name", e.target.value)} />
+              </L>
+              <L label="Kategori">
+                <select
+                  className="input"
+                  value={form.categoryId}
+                  onChange={(e) => {
+                    set("categoryId", e.target.value);
+                    set("subcategoryId", "");
+                  }}
+                >
+                  <option value="">Seçiniz</option>
+                  {categories.map((c) => (
+                    <option key={c.id} value={c.id}>
+                      {c.icon} {c.name}
+                    </option>
+                  ))}
+                </select>
+              </L>
+              <L label="Alt Kategori">
+                <select className="input" value={form.subcategoryId} onChange={(e) => set("subcategoryId", e.target.value)}>
+                  <option value="">Seçiniz</option>
+                  {subs.map((s) => (
+                    <option key={s.id} value={s.id}>
+                      {s.name}
+                    </option>
+                  ))}
+                </select>
+              </L>
+
+              <L label="Genişlik (cm)">
+                <input className="input" type="number" value={form.width} onChange={(e) => set("width", e.target.value)} />
+              </L>
+              <L label="Yükseklik (cm)">
+                <input className="input" type="number" value={form.height} onChange={(e) => set("height", e.target.value)} />
+              </L>
+              <L label="Derinlik (cm)">
+                <input className="input" type="number" value={form.depth} onChange={(e) => set("depth", e.target.value)} />
+              </L>
+              <L label="Yerleşim Düzlemi">
+                <select className="input" value={form.plane} onChange={(e) => set("plane", e.target.value)}>
+                  <option value="wall">Duvar</option>
+                  <option value="floor">Zemin</option>
+                  <option value="ceiling">Tavan</option>
+                </select>
+              </L>
+
+              <L label="Kiralama Fiyatı (₺)">
+                <input className="input" type="number" value={form.price} onChange={(e) => set("price", e.target.value)} />
+              </L>
+              <L label="Stok / Adet">
+                <input className="input" type="number" value={form.stock} onChange={(e) => set("stock", e.target.value)} />
+              </L>
+              <L label="Malzeme">
+                <input className="input" value={form.material} onChange={(e) => set("material", e.target.value)} placeholder="MDF, Pleksi, Lateks..." />
+              </L>
+              <L label="Etiketler">
+                <input className="input" value={form.tags} onChange={(e) => set("tags", e.target.value)} placeholder="pastel, gold, unicorn" />
+              </L>
+
+              <L label="Şekil (görsel yoksa)">
+                <select className="input" value={form.shape} onChange={(e) => set("shape", e.target.value)}>
+                  {SHAPE_OPTIONS.map((s) => (
+                    <option key={s.value} value={s.value}>
+                      {s.label}
+                    </option>
+                  ))}
+                </select>
+              </L>
+              <L label="Renk">
+                <div className="flex gap-2">
+                  <input
+                    type="color"
+                    className="h-9 w-12 cursor-pointer rounded-lg border border-slate-200"
+                    value={/^#[0-9a-fA-F]{6}$/.test(form.color) ? form.color : "#cccccc"}
+                    onChange={(e) => set("color", e.target.value)}
+                  />
+                  <input className="input" value={form.color} onChange={(e) => set("color", e.target.value)} />
+                </div>
+              </L>
+              <L label="Görsel Yükle (PNG/JPG)">
+                <input
+                  type="file"
+                  accept="image/*"
+                  className="input py-1.5 text-xs"
+                  onChange={(e) => e.target.files?.[0] && onImage(e.target.files[0])}
+                />
+              </L>
+              <L label="3D Model Bağlantısı (.glb)">
+                <input className="input" value={form.modelUrl} onChange={(e) => set("modelUrl", e.target.value)} placeholder="https://..." />
+              </L>
+
+              <L label="Açıklama" className="md:col-span-3">
+                <input className="input" value={form.description} onChange={(e) => set("description", e.target.value)} />
+              </L>
+              <div className="flex items-end gap-2">
+                <button className={`chip ${form.colorEditable ? "chip-active" : ""}`} onClick={() => set("colorEditable", !form.colorEditable)}>
+                  🎨 Rengi değiştirilebilir
+                </button>
+                <button className={`chip ${form.isActive ? "chip-active" : ""}`} onClick={() => set("isActive", !form.isActive)}>
+                  {form.isActive ? "Aktif" : "Pasif"}
+                </button>
+              </div>
+            </div>
+
+            <div className="mt-4 flex flex-wrap items-center gap-3">
+              <div className="flex h-16 w-16 items-center justify-center rounded-xl bg-slate-50">
+                {form.imageUrl ? (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img src={form.imageUrl} alt="önizleme" className="h-full w-full object-contain" />
+                ) : (
+                  <ProductGlyph shape={form.shape} color={form.color} style={{ width: "80%", height: "80%" }} />
+                )}
+              </div>
+              <div className="flex flex-1 flex-wrap gap-1">
+                {PALETTES.flatMap((p) => p.colors)
+                  .slice(0, 24)
+                  .map((c) => (
+                    <button
+                      key={c}
+                      onClick={() => set("color", c)}
+                      className="h-6 w-6 rounded-md border border-slate-200"
+                      style={{ background: c }}
+                    />
+                  ))}
+              </div>
+              {form.imageUrl && (
+                <button className="btn-ghost text-xs" onClick={() => set("imageUrl", "")}>
+                  Görseli kaldır
+                </button>
+              )}
+              <button className="btn-primary" disabled={busy} onClick={submit}>
+                {form.id ? "💾 Güncelle" : "➕ Ürünü Ekle"}
+              </button>
+              {form.id && (
+                <button className="btn-soft" onClick={() => setForm(emptyForm)}>
+                  Vazgeç
+                </button>
+              )}
+            </div>
+          </>
+        )}
       </div>
 
       <div className="card p-5">
@@ -364,6 +837,9 @@ export default function UrunlerPage() {
                     <td className="py-2">
                       <span className="font-medium text-slate-800">{p.name}</span>
                       {!p.isActive && <span className="ml-2 rounded bg-slate-100 px-1.5 text-[10px]">pasif</span>}
+                      {cat && isBackdropCategoryName(cat.name) && (
+                        <span className="ml-2 rounded bg-amber-50 px-1.5 text-[10px] text-amber-700">arka fon</span>
+                      )}
                       <span className="block text-[11px] text-slate-400">{p.material}</span>
                     </td>
                     <td className="py-2 text-xs text-slate-600">{cat ? `${cat.icon} ${cat.name}` : "—"}</td>
@@ -386,7 +862,7 @@ export default function UrunlerPage() {
               {filtered.length === 0 && (
                 <tr>
                   <td colSpan={7} className="py-10 text-center text-slate-400">
-                    Ürün bulunamadı. Yukarıdaki formdan ilk ürününüzü ekleyin.
+                    Ürün bulunamadı. Yukarıdaki formtan ilk ürününüzü ekleyin.
                   </td>
                 </tr>
               )}
